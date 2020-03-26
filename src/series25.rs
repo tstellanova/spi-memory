@@ -74,6 +74,10 @@ enum Opcode {
     ReadDeviceId = 0xAB,
     /// Read the 8-bit manufacturer and device IDs.
     ReadMfDId = 0x90,
+    /// Read the 8-bit manufacturer and device IDs for Dual I/O chips
+    ReadMfDIdDual = 0x92,
+    /// Read the 8-bit manufacturer and device IDs for Quad I/O chips
+    ReadMfDIdQuad = 0x94,
     /// Read 16-bit manufacturer ID and 8-bit device ID.
     ReadJedecId = 0x9F,
     /// Set the write enable latch.
@@ -160,6 +164,27 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
         // Skip buf[0] (SPI read response byte)
         Ok(Identification::from_jedec_id(&buf[1..]))
     }
+	
+	pub fn read_mfd_id(&mut self) -> Result<Identification, Error<SPI, CS>> {
+		// Read three bytes from ReadMfDId address
+        let mut buf: [u8; 4] = [Opcode::ReadMfDId as u8, 0, 0, 0];
+        self.command(&mut buf)?;
+
+        // Skip buf[0] (SPI read response byte)
+        Ok(Identification::from_jedec_id(&buf[1..]))
+	}
+	
+	/// Try multiple methods to find a valid device identifier.
+	pub fn find_device_identifier(&mut self) -> Result<Identification, Error<SPI, CS>> {
+		let test1 = self.read_jedec_id()?;
+		if test1.mfr_code() == 0  {
+			//No such manufacturer code: Try another method
+			let test2 = self.read_mfd_id()?;
+			return Ok(test2);
+		}
+		
+		return Ok(test1);
+	}
 
     /// Reads the status register.
     pub fn read_status(&mut self) -> Result<Status, Error<SPI, CS>> {
@@ -280,5 +305,17 @@ mod tests {
         let device_id = ident.device_id();
         assert_eq!(device_id[0], 0x22);
         assert_eq!(device_id[1], 0x08);
+		
+		// ID bytes from actual read_mfd_id
+		let winbond_id_bytes =  [0x17, 0x40, 0x18];
+        let ident = Identification::from_jedec_id(&cypress_id_bytes);
+        assert_eq!(0x17, ident.mfr_code());
+        assert_eq!(0, ident.continuation_count());
+        let device_id = ident.device_id();
+        assert_eq!(device_id[0], 0x40);
+        assert_eq!(device_id[1], 0x18);
     }
+	
+
+	
 }

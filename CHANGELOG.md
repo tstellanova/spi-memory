@@ -3,6 +3,9 @@
 ## Unreleased
 
 * Implement `Display` for `Error`
+* Add `find_device_identifier` to try multiple ways to find a valid device identifier
+* Add `read_mfd_id` to read compact Mfr/Device ID using opcode 0x90
+* Add support for devices that use 0x90 to obtain mfr/device ID
 
 ## 0.2.0 - 2020-03-25
 
