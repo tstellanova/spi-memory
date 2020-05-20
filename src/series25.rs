@@ -234,26 +234,6 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
         Ok(())
     }
 
-    // fn send_command_header(&mut self, op: Opcode, addr: u32) -> Result<(), Error<SPI, CS>> {
-    //     //only send as many address bytes as are supported by the device
-    //     match self.address_len {
-    //         3 => {
-    //             self.read_command(&mut [
-    //                 op as u8,
-    //                 (addr >> 16) as u8,
-    //                 (addr >> 8) as u8,
-    //                 addr as u8,
-    //             ])
-    //         }
-    //         _ => {
-    //             self.read_command(&mut [
-    //                 op as u8,
-    //                 (addr >> 8) as u8,
-    //                 addr as u8,
-    //             ])
-    //         }
-    //     }
-    // }
 }
 
 impl<SPI: Transfer<u8>, CS: OutputPin> Read<u32, SPI, CS> for Flash<SPI, CS> {
@@ -294,15 +274,16 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Read<u32, SPI, CS> for Flash<SPI, CS> {
 impl<SPI: Transfer<u8>, CS: OutputPin> FastBlockRead<u32, SPI, CS> for Flash<SPI, CS> {
     /// Reads flash contents into `buf`, starting at `addr`
     /// using the fast block read mode, where the device will
-    /// continue writing to MISO as long as it receives a clock signal.
-    /// This mode is invoked by sending the opcode, device address,
-    /// followed by a dummy byte.
+    /// continue writing to MISO as long as it receives a clock signal
+    /// (and MOSI is ignored).
     ///
     /// # Parameters
     ///
     /// * `addr`: 24-bit address to start reading at. (Supported addresses vary by device.)
     /// * `buf`: Destination buffer to fill.
     fn fast_block_read(&mut self, addr: u32, buf: &mut [u8]) -> Result<(), Error<SPI, CS>> {
+
+        // This mode is invoked by sending { opcode, device address, dummy byte }
 
         match self.address_len {
             3 => {
