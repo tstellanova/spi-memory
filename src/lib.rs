@@ -34,6 +34,16 @@ pub trait Read<Addr, SPI: Transfer<u8>, CS: OutputPin> {
     fn read(&mut self, addr: Addr, buf: &mut [u8]) -> Result<(), Error<SPI, CS>>;
 }
 
+/// A trait for reading operations from a memory chip.
+pub trait FastBlockRead<Addr, SPI: Transfer<u8>, CS: OutputPin> {
+    /// Reads bytes from a memory chip.
+    ///
+    /// # Parameters
+    /// * `addr`: The address to start reading at.
+    /// * `buf`: The buffer to read `buf.len()` bytes into.
+    fn fast_block_read(&mut self, addr: Addr, buf: &mut [u8]) -> Result<(), Error<SPI, CS>>;
+}
+
 /// A trait for writing and erasing operations on a memory chip.
 pub trait BlockDevice<Addr, SPI: Transfer<u8>, CS: OutputPin> {
     /// Erases sectors from the memory chip.

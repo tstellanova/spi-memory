@@ -1,6 +1,6 @@
 //! Driver for 25-series SPI Flash and EEPROM chips.
 
-use crate::{utils::HexSlice, BlockDevice, Error, Read};
+use crate::{utils::HexSlice, BlockDevice, Error, Read, FastBlockRead};
 use bitflags::bitflags;
 use core::convert::TryInto;
 use core::fmt;
@@ -89,6 +89,8 @@ enum Opcode {
     /// Write the 8-bit status register. Not all bits are writeable.
     WriteStatus = 0x01,
     Read = 0x03,
+    /// fast bulk read mode: MOSI ignored
+    FastRead = 0x0B,
     PageProg = 0x02, // directly writes to EEPROMs too
     SectorErase = 0x20,
     BlockErase = 0xD8,
@@ -120,6 +122,8 @@ bitflags! {
 pub struct Flash<SPI: Transfer<u8>, CS: OutputPin> {
     spi: SPI,
     cs: CS,
+    /// the number of bytes used for addressing: typically 2 or 3
+    address_len: u8,
 }
 
 impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
@@ -132,7 +136,20 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
     /// * **`cs`**: The **C**hip-**S**elect Pin connected to the `\CS`/`\CE` pin
     ///   of the flash chip. Will be driven low when accessing the device.
     pub fn init(spi: SPI, cs: CS) -> Result<Self, Error<SPI, CS>> {
-        let mut this = Self { spi, cs };
+        Self::init_full(spi,cs,3)
+    }
+
+    /// Creates a new 25-series flash driver.
+    ///
+    /// # Parameters
+    ///
+    /// * **`spi`**: An SPI master. Must be configured to operate in the correct
+    ///   mode for the device.
+    /// * **`cs`**: The **C**hip-**S**elect Pin connected to the `\CS`/`\CE` pin
+    ///   of the flash chip. Will be driven low when accessing the device.
+    /// * **`address_len`**: The number of bytes used for addressing this device: 2 or 3 supported
+    pub fn init_full(spi: SPI, cs: CS, address_len: u8) -> Result<Self, Error<SPI, CS>> {
+        let mut this = Self { spi, cs, address_len };
         let status = this.read_status()?;
         info!("Flash::init: status = {:?}", status);
 
@@ -151,6 +168,17 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
         let spi_result = self.spi.transfer(bytes).map_err(Error::Spi);
         self.cs.set_high().map_err(Error::Gpio)?;
         spi_result?;
+        Ok(())
+    }
+
+    fn read_command(&mut self, cmd_buf: &mut [u8], read_buf: &mut [u8]) -> Result<(), Error<SPI, CS>> {
+        self.cs.set_low().map_err(Error::Gpio)?;
+        let mut spi_result = self.spi.transfer( cmd_buf);
+        if spi_result.is_ok() {
+            spi_result = self.spi.transfer(read_buf);
+        }
+        self.cs.set_high().map_err(Error::Gpio)?;
+        spi_result.map(|_| ()).map_err(Error::Spi)?;
         Ok(())
     }
 
@@ -205,6 +233,7 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Flash<SPI, CS> {
         while self.read_status()?.contains(Status::BUSY) {}
         Ok(())
     }
+
 }
 
 impl<SPI: Transfer<u8>, CS: OutputPin> Read<u32, SPI, CS> for Flash<SPI, CS> {
@@ -222,21 +251,60 @@ impl<SPI: Transfer<u8>, CS: OutputPin> Read<u32, SPI, CS> for Flash<SPI, CS> {
     /// * `buf`: Destination buffer to fill.
     fn read(&mut self, addr: u32, buf: &mut [u8]) -> Result<(), Error<SPI, CS>> {
         // TODO what happens if `buf` is empty?
-
-        let mut cmd_buf = [
-            Opcode::Read as u8,
-            (addr >> 16) as u8,
-            (addr >> 8) as u8,
-            addr as u8,
-        ];
-
-        self.cs.set_low().map_err(Error::Gpio)?;
-        let mut spi_result = self.spi.transfer(&mut cmd_buf);
-        if spi_result.is_ok() {
-            spi_result = self.spi.transfer(buf);
+        match self.address_len {
+            3 => {
+                self.read_command(&mut [
+                    Opcode::Read as u8,
+                    (addr >> 16) as u8,
+                    (addr >> 8) as u8,
+                    addr as u8,
+                ], buf )
+            }
+            _ => {
+                self.read_command(&mut [
+                    Opcode::Read as u8,
+                    (addr >> 8) as u8,
+                    addr as u8,
+                ], buf)
+            }
         }
-        self.cs.set_high().map_err(Error::Gpio)?;
-        spi_result.map(|_| ()).map_err(Error::Spi)
+    }
+}
+
+impl<SPI: Transfer<u8>, CS: OutputPin> FastBlockRead<u32, SPI, CS> for Flash<SPI, CS> {
+    /// Reads flash contents into `buf`, starting at `addr`
+    /// using the fast block read mode, where the device will
+    /// continue writing to MISO as long as it receives a clock signal
+    /// (and MOSI is ignored).
+    ///
+    /// # Parameters
+    ///
+    /// * `addr`: 24-bit address to start reading at. (Supported addresses vary by device.)
+    /// * `buf`: Destination buffer to fill.
+    fn fast_block_read(&mut self, addr: u32, buf: &mut [u8]) -> Result<(), Error<SPI, CS>> {
+
+        // This mode is invoked by sending { opcode, device address, dummy byte }
+
+        match self.address_len {
+            3 => {
+                self.read_command(&mut [
+                    Opcode::FastRead as u8,
+                    (addr >> 16) as u8,
+                    (addr >> 8) as u8,
+                    addr as u8,
+                    0 as u8, //dummy byte
+                ], buf)
+            }
+            _ => {
+                self.read_command(&mut [
+                    Opcode::FastRead as u8,
+                    (addr >> 8) as u8,
+                    addr as u8,
+                    0 as u8, //dummy byte
+                ], buf)
+            }
+        }
+
     }
 }
 
